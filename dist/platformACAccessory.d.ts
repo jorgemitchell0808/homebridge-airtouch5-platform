@@ -16,15 +16,13 @@ export declare class AirTouchACAccessory {
     zones: Array<Zone>;
     api: AirtouchAPI;
     private currentTemperature;
-    private weatherPollTimer;
-    private latitude;
-    private longitude;
+    private tempServer;
     constructor(platform: AirtouchPlatform, accessory: PlatformAccessory, AirtouchId: any, ACNumber: any, ac: AC, zones: Array<Zone>, log: Logger, api: AirtouchAPI);
     /**
-     * Fetch the current outdoor temperature from Open-Meteo (free, no API key required).
-     * Updates this.currentTemperature and pushes the update to HomeKit.
+     * Starts a tiny HTTP server that listens for temperature pushes from Shortcuts.
+     * Your Shortcut should hit: GET http://192.168.0.106:8583/temperature/23.5
      */
-    private fetchWeatherTemperature;
+    private startTemperatureServer;
     updateStatus(ac: AC, zones: Array<Zone>): void;
     handleRotationSpeedGet(): number;
     handleRotationSpeedSet(value: CharacteristicValue): void;
@@ -37,16 +35,9 @@ export declare class AirTouchACAccessory {
     handleCurrentHeaterCoolerStateGet(): 0 | 1 | 2 | 3;
     handleTargetHeaterCoolerStateGet(): 0 | 1 | 2;
     handleTargetHeaterCoolerStateSet(value: CharacteristicValue): void;
-    /**
-     * Returns the current temperature.
-     * Uses the weather API value if available, otherwise falls back to the AC unit sensor.
-     */
     handleCurrentTemperatureGet(): number;
     handleTargetTemperatureGet(): number;
     handleTargetTemperatureSet(value: CharacteristicValue): void;
-    /**
-     * Call this when the accessory is being destroyed to clean up the poll timer.
-     */
     destroy(): void;
 }
 //# sourceMappingURL=platformACAccessory.d.ts.map
