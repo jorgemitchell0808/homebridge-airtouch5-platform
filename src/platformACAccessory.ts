@@ -1,4 +1,5 @@
 import { Service, PlatformAccessory, Logger, CharacteristicValue } from 'homebridge';
+import * as http from 'http';
 
 import { AirtouchPlatform } from './platform';
 
@@ -6,7 +7,7 @@ import { AC, Zone } from './airTouchWrapper';
 import { AirtouchAPI } from './api';
 import { MAGIC } from './magic';
 
-const WEATHER_POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const TEMP_SERVER_PORT = 8583;
 
 export class AirTouchACAccessory {
   private service: Service;
@@ -21,9 +22,7 @@ export class AirTouchACAccessory {
   api: AirtouchAPI;
 
   private currentTemperature: number | null = null;
-  private weatherPollTimer: NodeJS.Timeout | null = null;
-  private latitude: number | null = null;
-  private longitude: number | null = null;
+  private tempServer: http.Server | null = null;
 
   constructor(
     private readonly platform: AirtouchPlatform,
@@ -45,18 +44,8 @@ export class AirTouchACAccessory {
     this.zones = zones;
     this.api = api;
 
-    // Read lat/long from platform config if provided
-    const config = this.platform.config as Record<string, unknown>;
-    if (typeof config.latitude === 'number' && typeof config.longitude === 'number') {
-      this.latitude = config.latitude as number;
-      this.longitude = config.longitude as number;
-      this.log.info(`ACACC   | Weather temperature enabled. Location: ${this.latitude}, ${this.longitude}`);
-      // Fetch immediately, then start polling
-      this.fetchWeatherTemperature();
-      this.weatherPollTimer = setInterval(() => this.fetchWeatherTemperature(), WEATHER_POLL_INTERVAL_MS);
-    } else {
-      this.log.warn('ACACC   | No latitude/longitude in config — falling back to AC unit temperature.');
-    }
+    // Start HTTP server to receive temperature pushed from Shortcuts
+    this.startTemperatureServer();
 
     this.accessory.getService(this.platform.Service.AccessoryInformation)
       ?.setCharacteristic(this.platform.Characteristic.Manufacturer, 'AirTouch')
@@ -109,37 +98,39 @@ export class AirTouchACAccessory {
   }
 
   /**
-   * Fetch the current outdoor temperature from Open-Meteo (free, no API key required).
-   * Updates this.currentTemperature and pushes the update to HomeKit.
+   * Starts a tiny HTTP server that listens for temperature pushes from Shortcuts.
+   * Your Shortcut should hit: GET http://192.168.0.106:8583/temperature/23.5
    */
-  private async fetchWeatherTemperature(): Promise<void> {
-    if (this.latitude === null || this.longitude === null) {
-      return;
-    }
-    const url =
-      `https://api.open-meteo.com/v1/forecast` +
-      `?latitude=${this.latitude}&longitude=${this.longitude}` +
-      `&current_weather=true&temperature_unit=celsius`;
-    try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        this.log.warn(`ACACC   | Weather fetch failed: HTTP ${response.status}`);
-        return;
-      }
-      const data = await response.json() as { current_weather?: { temperature?: number } };
-      const temp = data?.current_weather?.temperature;
-      if (typeof temp === 'number') {
-        this.currentTemperature = temp;
-        this.log.debug(`ACACC   | Weather temperature updated: ${temp}°C`);
-        // Push the new value to HomeKit immediately
-        this.service.getCharacteristic(this.platform.Characteristic.CurrentTemperature)
-          .updateValue(temp);
+  private startTemperatureServer() {
+    this.tempServer = http.createServer((req, res) => {
+      const match = req.url?.match(/^\/temperature\/([\d.]+)$/);
+      if (match) {
+        const temp = parseFloat(match[1]);
+        if (!isNaN(temp)) {
+          this.currentTemperature = temp;
+          this.log.debug(`ACACC   | Temperature updated from Shortcuts: ${temp}°C`);
+          this.service.getCharacteristic(this.platform.Characteristic.CurrentTemperature)
+            .updateValue(temp);
+          res.writeHead(200);
+          res.end('OK');
+        } else {
+          res.writeHead(400);
+          res.end('Bad temperature value');
+        }
       } else {
-        this.log.warn('ACACC   | Weather API returned unexpected data shape.');
+        res.writeHead(404);
+        res.end('Not found - use /temperature/23.5');
       }
-    } catch (err) {
-      this.log.warn(`ACACC   | Weather fetch error: ${err}`);
-    }
+    });
+
+    this.tempServer.listen(TEMP_SERVER_PORT, () => {
+      this.log.info(`ACACC   | Temperature server listening on port ${TEMP_SERVER_PORT}`);
+      this.log.info(`ACACC   | Push temp via: http://192.168.0.106:${TEMP_SERVER_PORT}/temperature/23.5`);
+    });
+
+    this.tempServer.on('error', (err) => {
+      this.log.warn(`ACACC   | Temperature server error: ${err.message}`);
+    });
   }
 
   updateStatus(ac: AC, zones: Array<Zone>) {
@@ -310,10 +301,6 @@ export class AirTouchACAccessory {
     }
   }
 
-  /**
-   * Returns the current temperature.
-   * Uses the weather API value if available, otherwise falls back to the AC unit sensor.
-   */
   handleCurrentTemperatureGet() {
     if (this.currentTemperature !== null) {
       return this.currentTemperature;
@@ -331,13 +318,10 @@ export class AirTouchACAccessory {
     this.api.acSetTargetTemperature(this.ac.ac_number, numValue);
   }
 
-  /**
-   * Call this when the accessory is being destroyed to clean up the poll timer.
-   */
   destroy() {
-    if (this.weatherPollTimer) {
-      clearInterval(this.weatherPollTimer);
-      this.weatherPollTimer = null;
+    if (this.tempServer) {
+      this.tempServer.close();
+      this.tempServer = null;
     }
   }
 }
