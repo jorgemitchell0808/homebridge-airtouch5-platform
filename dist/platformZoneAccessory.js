@@ -38,7 +38,7 @@ class AirTouchZoneAccessory {
             .setProps({
             minValue: 0,
             maxValue: 100,
-            minStep: 25,
+            minStep: 5,
         });
     }
     updateStatus(zone, ac) {
@@ -81,8 +81,8 @@ class AirTouchZoneAccessory {
     }
     handleRotationSpeedGet() {
         const raw = +this.zone.zone_status.zone_damper_position;
-        // Round to nearest 25% step
-        return Math.round(raw / 25) * 25;
+        // Round to nearest 5% step
+        return Math.round(raw / 5) * 5;
     }
     handleRotationSpeedSet(value) {
         const numValue = Number(value);
